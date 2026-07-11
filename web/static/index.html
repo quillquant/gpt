@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>gpt / ollama</title>
+  <style>
+    body { font-family: "Courier New", Courier, monospace; margin: 1em; background: #000; color: #fff; }
+    textarea, select, input, button, pre { font-family: inherit; color: #fff; background: #000; border: 1px solid #fff; }
+    button:disabled { color: #888; border-color: #888; }
+    textarea, select { width: 100%; max-width: 40em; }
+    progress { width: 100%; max-width: 40em; height: 1.2em; }
+    #toast { position: fixed; bottom: 1em; left: 1em; border: 1px solid #fff; padding: 0.4em 0.6em; }
+    #toast.error { color: #fcc; }
+    hr { border: none; border-top: 1px solid #fff; }
+    .hist-row { display: flex; height: 14px; max-width: 40em; margin: 2px 0; border: 1px solid #333; }
+    .hist-row span { display: block; height: 100%; min-width: 0; }
+    .c-meta { background: #1f48ff; }
+    .c-sched { background: #888888; }
+    .c-cache { background: #2ecc71; }
+    .c-prompt { background: #ff751f; }
+    .c-gen { background: #f1c40f; }
+    .hist-legend span { display: inline-block; width: 0.8em; height: 0.8em; margin-right: 0.25em; vertical-align: middle; }
+    .hist-legend { font-size: 12px; color: #ccc; }
+  </style>
+</head>
+<body>
+  <p>
+    <img src="/static/shakti-mark.png" width="48" height="48" alt="shakti" />
+    gpt
+  </p>
+  <p><button type="button" id="btn-stop-all">stop all</button></p>
+  <hr />
+
+  <p>
+    <label for="model-available">download model</label><br />
+    <select id="model-available">
+      <option value="">loading…</option>
+    </select>
+    <button type="button" id="btn-download">download</button>
+  </p>
+  <p>
+    <label for="model-download">or custom name</label><br />
+    <input id="model-download" type="text" size="40" placeholder="e.g. gemma3:270m" />
+  </p>
+  <p id="download-progress-wrap" hidden>
+    <progress id="download-progress" max="100" value="0"></progress>
+    <span id="download-label"></span>
+  </p>
+  <hr />
+
+  <p>
+    <label for="model-select">model</label><br />
+    <select id="model-select"></select>
+    <button type="button" id="btn-toggle">start</button>
+  </p>
+  <p>
+    <span id="model-pill">stopped</span>
+    <span id="load-time" hidden></span>
+    <span id="counts"></span>
+  </p>
+  <p id="load-progress-wrap" hidden>
+    <progress id="load-progress"></progress>
+    <span id="load-label"></span>
+  </p>
+  <p id="model-meta"></p>
+  <p id="model-best"></p>
+
+  <form id="chat-form">
+    <p>
+      <label for="chat-input">input</label><br />
+      <textarea id="chat-input" rows="4" spellcheck="true" placeholder="start a model to chat" disabled></textarea><br />
+      <label for="chat-files">files</label><br />
+      <input id="chat-files" type="file" multiple accept="image/*,.zip,text/*,.md,.py,.json,.csv,.txt,.js,.ts,.tsx,.jsx,.html,.css,.yml,.yaml,.toml,.sh,.rs,.go,.java,.c,.h,.cpp,.sql,.log" disabled />
+      <span id="chat-files-label"></span><br />
+      <button type="submit" id="chat-send" disabled>send</button>
+    </p>
+    <p>
+      <label><input type="checkbox" id="chat-think" /> include thinking (slower)</label>
+    </p>
+    <p>
+      <label for="chat-output">output</label><br />
+      <textarea id="chat-output" rows="12" readonly placeholder="model response will appear here"></textarea>
+    </p>
+    <pre id="chat-timing" hidden></pre>
+  </form>
+
+  <p class="hist-legend">
+    response times:
+    <span class="c-meta"></span>meta
+    <span class="c-sched"></span>sched
+    <span class="c-cache"></span>cache
+    <span class="c-prompt"></span>prompt
+    <span class="c-gen"></span>gen
+  </p>
+  <div id="timing-hist"></div>
+
+  <p id="toast" hidden></p>
+  <script src="/static/app.js?v=39"></script>
+</body>
+</html>

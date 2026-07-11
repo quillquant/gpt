@@ -1,0 +1,173 @@
+{
+  "gpu_note": "~16GB VRAM. Models up to ~14GB (Q4-class) are treated as full GPU fit. Larger weights spill to system RAM.",
+  "models": {
+    "deepseek-r1:14b": {
+      "size": "9.0 GB",
+      "category": "reasoning",
+      "best_for": "Best reasoning/VRAM ratio \u2014 chain-of-thought without spilling to RAM",
+      "gpu_fit": "full"
+    },
+    "deepseek-r1:1.5b": {
+      "size": "1.1 GB",
+      "category": "reasoning",
+      "best_for": "Tiny reasoning model for quick experiments and low-latency checks",
+      "gpu_fit": "full"
+    },
+    "deepseek-r1:8b": {
+      "size": "5.2 GB",
+      "category": "reasoning",
+      "best_for": "Strong reasoning in a compact footprint",
+      "gpu_fit": "full"
+    },
+    "devstral:24b": {
+      "size": "14 GB",
+      "category": "coding",
+      "best_for": "Coding \u2014 Mistral's earlier Devstral coder",
+      "gpu_fit": "full"
+    },
+    "devstral-small-2:24b": {
+      "size": "15 GB",
+      "category": "coding",
+      "best_for": "Agentic coding \u2014 explore codebases, edit multiple files, tool use (384K context)",
+      "gpu_fit": "tight"
+    },
+    "gemma3:12b": {
+      "size": "8.1 GB",
+      "category": "general",
+      "best_for": "General purpose (Google Gemma 3)",
+      "gpu_fit": "full"
+    },
+    "gemma3:27b": {
+      "size": "17 GB",
+      "category": "large",
+      "best_for": "General purpose, larger Gemma 3 (spills to RAM)",
+      "gpu_fit": "spill"
+    },
+    "gemma4:12b": {
+      "size": "7.6 GB",
+      "category": "general",
+      "best_for": "Gemma 4 all-rounder \u2014 reasoning, coding, vision, and agent workflows",
+      "gpu_fit": "full"
+    },
+    "gemma4:26b-a4b-it-qat": {
+      "size": "15 GB",
+      "category": "large",
+      "best_for": "Gemma 4 MoE near-30B quality, QAT-tuned for 16GB cards \u2014 keep context short",
+      "gpu_fit": "tight"
+    },
+    "gpt-oss:120b": {
+      "size": "65 GB",
+      "category": "large",
+      "best_for": "Largest open gpt-oss model \u2014 batch quality over interactive speed (heavy RAM spill)",
+      "gpu_fit": "spill"
+    },
+    "gpt-oss:20b": {
+      "size": "13 GB",
+      "category": "general",
+      "best_for": "Fastest interactive gpt-oss on 16GB \u2014 high tokens/sec, fully on GPU",
+      "gpu_fit": "full"
+    },
+    "llama3.1:8b": {
+      "size": "4.9 GB",
+      "category": "general",
+      "best_for": "General purpose Meta Llama 3.1 \u2014 fast and reliable",
+      "gpu_fit": "full"
+    },
+    "llama3.2-vision:11b": {
+      "size": "7.8 GB",
+      "category": "vision",
+      "best_for": "Image + text understanding (multimodal)",
+      "gpu_fit": "full"
+    },
+    "lfm2.5:8b": {
+      "size": "5.2 GB",
+      "category": "general",
+      "best_for": "Edge MoE tuned for fast, reliable tool calling on consumer GPUs",
+      "gpu_fit": "full"
+    },
+    "ministral-3:14b": {
+      "size": "9.1 GB",
+      "category": "general",
+      "best_for": "Mistral edge model \u2014 vision + tools, strong speed on 16GB",
+      "gpu_fit": "full"
+    },
+    "mistral-small:22b": {
+      "size": "12 GB",
+      "category": "general",
+      "best_for": "Strong general purpose Mistral Small",
+      "gpu_fit": "full"
+    },
+    "mistral-small3.2:24b": {
+      "size": "15 GB",
+      "category": "general",
+      "best_for": "Mistral Small 3.2 \u2014 better instruction following, function calling, and vision",
+      "gpu_fit": "tight"
+    },
+    "nomic-embed-text:latest": {
+      "size": "274 MB",
+      "category": "embeddings",
+      "best_for": "Local embeddings / RAG",
+      "gpu_fit": "full"
+    },
+    "phi4:14b": {
+      "size": "9.1 GB",
+      "category": "reasoning",
+      "best_for": "Math, STEM, and coding reasoning (Microsoft Phi-4)",
+      "gpu_fit": "full"
+    },
+    "qwen2.5:14b": {
+      "size": "9.0 GB",
+      "category": "general",
+      "best_for": "General purpose Qwen 2.5 generation",
+      "gpu_fit": "full"
+    },
+    "qwen2.5-coder:14b": {
+      "size": "9.0 GB",
+      "category": "coding",
+      "best_for": "Coding (Qwen 2.5 generation)",
+      "gpu_fit": "full"
+    },
+    "qwen3:14b": {
+      "size": "9.3 GB",
+      "category": "general",
+      "best_for": "Qwen3 with thinking mode \u2014 strong instruction following",
+      "gpu_fit": "full"
+    },
+    "qwen3:8b": {
+      "size": "5.2 GB",
+      "category": "general",
+      "best_for": "Fast Qwen3 with thinking mode",
+      "gpu_fit": "full"
+    },
+    "qwen3-coder:30b": {
+      "size": "18 GB",
+      "category": "coding",
+      "best_for": "Coding with large context (spills to RAM)",
+      "gpu_fit": "spill"
+    },
+    "qwen3-vl:8b": {
+      "size": "6.1 GB",
+      "category": "vision",
+      "best_for": "Qwen3 vision-language \u2014 stronger multimodal than Llama 3.2 Vision",
+      "gpu_fit": "full"
+    },
+    "qwen3.5:9b": {
+      "size": "6.6 GB",
+      "category": "general",
+      "best_for": "Qwen 3.5 multimodal with thinking \u2014 best general upgrade in the ~7GB class",
+      "gpu_fit": "full"
+    },
+    "qwen3.5:9b-q8_0": {
+      "size": "10 GB",
+      "category": "general",
+      "best_for": "Higher-quality Qwen 3.5 9B (Q8) \u2014 still fully on GPU",
+      "gpu_fit": "full"
+    },
+    "qwen3.5:27b": {
+      "size": "17 GB",
+      "category": "large",
+      "best_for": "Strong Qwen 3.5 quality \u2014 tight on 16GB; keep context short",
+      "gpu_fit": "spill"
+    }
+  }
+}

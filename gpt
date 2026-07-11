@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Single entrypoint for this repo.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ISOLATED="$ROOT/ollama-isolated.sh"
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") <command> [args]
+
+Setup / UI:
+  install                Bootstrap Ollama, venv, private GitHub repo, VERSION
+  panel                  Start the control panel on http://127.0.0.1:8080
+  bench [models...]      Smoke-test APIs and benchmark cold load + chat
+
+Isolated model servers (see also ./ollama-isolated.sh):
+  start|start-all|stop|stop-all|list|run|logs
+
+Main Ollama:
+  service-start|service-stop|upgrade|update-models
+EOF
+}
+
+cmd_panel() {
+    local web="$ROOT/web"
+    cd "$web"
+    if [[ ! -d .venv ]]; then
+        python3 -m venv .venv
+        export PIP_INDEX_URL="https://pypi.org/simple"
+        export PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"
+        unset PIP_EXTRA_INDEX_URL PIP_FIND_LINKS || true
+        .venv/bin/pip install -q -r requirements.txt
+    fi
+    exec .venv/bin/uvicorn server:app --host 127.0.0.1 --port 8080
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+    ""|-h|--help|help) usage ;;
+    install)           exec "$ROOT/install.sh" "$@" ;;
+    panel|serve|web)   cmd_panel ;;
+    bench)             exec "$ROOT/bench.sh" "$@" ;;
+    start|start-all|stop|stop-all|list|run|logs|service-start|service-stop|upgrade|update-models)
+        exec "$ISOLATED" "$cmd" "$@"
+        ;;
+    *)
+        echo "Unknown command: $cmd" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

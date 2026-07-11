@@ -1,0 +1,9 @@
+# model=port
+# Port 11434 is reserved for the main systemd ollama service
+#
+# This file is generated per-machine by: ./gpt install
+# (from models.json + detected GPU VRAM). Do not commit models.conf.
+#
+# Example:
+# deepseek-r1:8b=11435
+# gemma3:12b=11436

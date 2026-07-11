@@ -7,6 +7,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF="$SCRIPT_DIR/models.conf"
 PID_DIR="${XDG_RUNTIME_DIR:-/tmp}/ollama-isolated"
 LOG_DIR="${PID_DIR}/logs"
+# Systemd ollama runs as user `ollama` and stores pulls here. Isolated serves
+# must use the same store or they only see ~/.ollama (usually nearly empty).
+OLLAMA_MODELS_DIR="${OLLAMA_MODELS:-/usr/share/ollama/.ollama/models}"
+
+# Keep warmed models resident until explicitly stopped.
+export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:--1}"
+export OLLAMA_MAX_LOADED_MODELS="${OLLAMA_MAX_LOADED_MODELS:-1}"
+# Skip probing cuda_v12 / vulkan — pin the CUDA 13 backend (RTX 50-series).
+if [[ -z "${OLLAMA_LLM_LIBRARY:-}" ]]; then
+    if [[ -d /usr/local/lib/ollama/cuda_v13 ]]; then
+        export OLLAMA_LLM_LIBRARY=cuda_v13
+    elif [[ -d /usr/local/lib/ollama/cuda_v12 ]]; then
+        export OLLAMA_LLM_LIBRARY=cuda_v12
+    fi
+fi
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
 _load_conf() {
     [[ -f "$CONF" ]] || { echo "Config not found: $CONF"; exit 1; }
@@ -43,11 +59,25 @@ cmd_start() {
 
     mkdir -p "$PID_DIR" "$LOG_DIR"
 
-    OLLAMA_HOST="127.0.0.1:$port" ollama serve &>"$(_logfile "$model")" &
+    if [[ ! -d "$OLLAMA_MODELS_DIR" ]]; then
+        echo "OLLAMA_MODELS dir missing: $OLLAMA_MODELS_DIR" >&2
+        return 1
+    fi
+
+      # DEBUG timestamps are needed to split warm load into meta vs sched.
+      # Pin CUDA library to avoid multi-backend GPU discovery (~2s).
+      OLLAMA_HOST="127.0.0.1:$port" \
+      OLLAMA_MODELS="$OLLAMA_MODELS_DIR" \
+      OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE" \
+      OLLAMA_MAX_LOADED_MODELS="$OLLAMA_MAX_LOADED_MODELS" \
+      OLLAMA_LLM_LIBRARY="${OLLAMA_LLM_LIBRARY:-}" \
+      CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" \
+      OLLAMA_DEBUG="${OLLAMA_DEBUG:-1}" \
+      ollama serve &>"$(_logfile "$model")" &
     local pid=$!
     echo "$pid" > "$(_pidfile "$model")"
 
-    echo -n "Starting $model on port $port (PID $pid)..."
+    echo -n "Starting $model on port $port (PID $pid, models=$OLLAMA_MODELS_DIR)..."
     for i in {1..30}; do
         curl -sf "http://127.0.0.1:$port/api/tags" &>/dev/null && break
         sleep 0.5
@@ -56,6 +86,12 @@ cmd_start() {
     if ! curl -sf "http://127.0.0.1:$port/api/tags" &>/dev/null; then
         echo " FAILED (log: $(_logfile "$model"))"
         rm -f "$(_pidfile "$model")"
+        return 1
+    fi
+
+    # Fail fast if this isolated server cannot see the requested model.
+    if ! curl -sf "http://127.0.0.1:$port/api/tags" | grep -Fq "\"$model\""; then
+        echo " ready, but model '$model' not in tags (check OLLAMA_MODELS=$OLLAMA_MODELS_DIR)"
         return 1
     fi
     echo " ready"
@@ -133,11 +169,74 @@ cmd_logs() {
     tail -f "$log"
 }
 
+cmd_service_start() {
+    if systemctl is-active --quiet ollama; then
+        echo "ollama is already running"
+        systemctl status ollama --no-pager -l | head -5
+        return 0
+    fi
+    sudo systemctl start ollama
+    echo "ollama started"
+    systemctl status ollama --no-pager -l | head -5
+}
+
+cmd_service_stop() {
+    if ! systemctl is-active --quiet ollama; then
+        echo "ollama is not running"
+        return 0
+    fi
+    sudo systemctl stop ollama
+    echo "ollama stopped"
+}
+
+cmd_upgrade() {
+    # Upgrade the Ollama binary/libs to the latest Linux amd64 release.
+    local archive="/tmp/ollama-upgrade/ollama-linux-amd64.tar.zst"
+    local install_dir="/usr/local"
+
+    if [[ ! -f "$archive" ]]; then
+        echo "Downloading Ollama..."
+        mkdir -p "$(dirname "$archive")"
+        curl -fL -o "$archive" "https://ollama.com/download/ollama-linux-amd64.tar.zst"
+    fi
+
+    echo "Stopping ollama service..."
+    sudo systemctl stop ollama || true
+
+    echo "Removing old libraries at ${install_dir}/lib/ollama ..."
+    sudo rm -rf "${install_dir}/lib/ollama"
+
+    echo "Extracting ${archive} -> ${install_dir} ..."
+    zstd -dc "$archive" | sudo tar -xf - -C "${install_dir}"
+
+    echo "Starting ollama service..."
+    sudo systemctl start ollama
+
+    echo "Done:"
+    ollama --version
+    systemctl is-active ollama
+}
+
+cmd_update_models() {
+    mapfile -t models < <(ollama list | tail -n +2 | awk '{print $1}')
+    if [[ ${#models[@]} -eq 0 ]]; then
+        echo "No models installed"
+        return 0
+    fi
+    echo "Updating ${#models[@]} model(s)..."
+    for model in "${models[@]}"; do
+        echo "--- Pulling $model ---"
+        ollama pull "$model"
+    done
+    echo "All models updated"
+    ollama list
+}
+
 usage() {
     cat <<EOF
 Usage: $(basename "$0") <command> [args]
 
-Commands:
+Isolated model servers:
   start <model>          Start an isolated server for one model
   start-all              Start isolated servers for all models in models.conf
   stop <model>           Stop a model's isolated server
@@ -146,19 +245,31 @@ Commands:
   run <model> <prompt>   Send a prompt to an isolated model's server
   logs <model>           Tail the log for a model's server
 
+Main Ollama service / install:
+  service-start          Start systemd ollama.service
+  service-stop           Stop systemd ollama.service
+  upgrade                Download/install latest Ollama binary (sudo)
+  update-models          ollama pull every locally installed model
+
 Each model runs as its own ollama serve process on a dedicated TCP port.
 Connect directly:  OLLAMA_HOST=127.0.0.1:<port> ollama run <model>
 Port assignments:  $CONF
+
+Tip: prefer ./gpt <command> for install / panel / bench as well.
 EOF
 }
 
 case "${1:-}" in
-    start)     cmd_start "${2:?Usage: $0 start <model>}" ;;
-    start-all) cmd_start_all ;;
-    stop)      cmd_stop "${2:?Usage: $0 stop <model>}" ;;
-    stop-all)  cmd_stop_all ;;
-    list)      cmd_list ;;
-    run)       model="${2:?Usage: $0 run <model> <prompt>}"; shift 2; cmd_run "$model" "$@" ;;
-    logs)      cmd_logs "${2:?Usage: $0 logs <model>}" ;;
-    *)         usage ;;
+    start)          cmd_start "${2:?Usage: $0 start <model>}" ;;
+    start-all)      cmd_start_all ;;
+    stop)           cmd_stop "${2:?Usage: $0 stop <model>}" ;;
+    stop-all)       cmd_stop_all ;;
+    list)           cmd_list ;;
+    run)            model="${2:?Usage: $0 run <model> <prompt>}"; shift 2; cmd_run "$model" "$@" ;;
+    logs)           cmd_logs "${2:?Usage: $0 logs <model>}" ;;
+    service-start)  cmd_service_start ;;
+    service-stop)   cmd_service_stop ;;
+    upgrade)        cmd_upgrade ;;
+    update-models)  cmd_update_models ;;
+    *)              usage ;;
 esac
