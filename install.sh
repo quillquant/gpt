@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Bootstrap this machine for the local Ollama control panel.
-# - Installs Ollama if missing
-# - Creates the web venv + dependencies
+# - Installs Ollama if missing (Linux installer or Homebrew on macOS)
+# - Creates the web venv + dependencies (Python 3.11+)
+# - Builds models.conf from models.json + detected GPU / unified memory
 # - Ensures a private GitHub repo exists (gh)
 # - Pins project semver from VERSION (starts at 0.0.0)
 set -euo pipefail
@@ -21,6 +22,29 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 need_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
+
+# Prefer Homebrew / pyenv Python 3.12+ over macOS system Python 3.9.
+resolve_python() {
+    local cand
+    for cand in \
+        "${PYTHON:-}" \
+        python3.14 python3.13 python3.12 python3.11 \
+        /opt/homebrew/bin/python3 \
+        /usr/local/bin/python3 \
+        python3
+    do
+        [[ -n "$cand" ]] || continue
+        if command -v "$cand" >/dev/null 2>&1; then
+            if "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+                command -v "$cand"
+                return 0
+            fi
+        fi
+    done
+    die "need Python 3.11+ (macOS system python3 is too old; install via: brew install python)"
+}
+
+PYTHON3="$(resolve_python)"
 
 read_version() {
     if [[ -f "$VERSION_FILE" ]]; then
@@ -50,13 +74,21 @@ ensure_ollama() {
     fi
 
     log "Ollama not found — installing"
-    need_cmd curl
-    if [[ "$(uname -s)" != "Linux" ]]; then
-        die "automatic Ollama install is only implemented for Linux; install from https://ollama.com/download"
+    local os
+    os="$(uname -s)"
+    if [[ "$os" == "Darwin" ]]; then
+        if command -v brew >/dev/null 2>&1; then
+            brew install ollama
+        else
+            die "install Ollama from https://ollama.com/download or: brew install ollama"
+        fi
+    elif [[ "$os" == "Linux" ]]; then
+        need_cmd curl
+        # Official installer (adds binary + systemd unit when possible).
+        curl -fsSL https://ollama.com/install.sh | sh
+    else
+        die "unsupported OS '$os'; install Ollama from https://ollama.com/download"
     fi
-
-    # Official installer (adds binary + systemd unit when possible).
-    curl -fsSL https://ollama.com/install.sh | sh
 
     command -v ollama >/dev/null 2>&1 \
         || die "Ollama install finished but 'ollama' is not on PATH"
@@ -64,6 +96,25 @@ ensure_ollama() {
 }
 
 ensure_ollama_service() {
+    local os
+    os="$(uname -s)"
+    if [[ "$os" == "Darwin" ]]; then
+        if command -v brew >/dev/null 2>&1 && brew services list 2>/dev/null | grep -q '^ollama'; then
+            if brew services list 2>/dev/null | awk '$1=="ollama"{print $2}' | grep -q started; then
+                log "Homebrew ollama service is started"
+            else
+                log "Starting Homebrew ollama service"
+                brew services start ollama
+            fi
+            return 0
+        fi
+        if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+            log "Ollama already responding on :11434"
+            return 0
+        fi
+        warn "start Ollama with: brew services start ollama  (or open the Ollama app)"
+        return 0
+    fi
     if ! command -v systemctl >/dev/null 2>&1; then
         warn "systemctl not available — start ollama manually if needed"
         return 0
@@ -106,18 +157,32 @@ gpu_vram_mib() {
             return 0
         fi
     fi
+    # Apple Silicon: unified memory (treat system RAM as the GPU budget).
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        local bytes mib
+        bytes="$(sysctl -n hw.memsize 2>/dev/null || true)"
+        if [[ -n "$bytes" && "$bytes" -gt 0 ]]; then
+            mib=$((bytes / 1024 / 1024))
+            printf '%s' "$mib"
+            return 0
+        fi
+    fi
     # Fallback: 16GB-class card (matches historical default for this project).
     printf '%s' "16303"
 }
 
 ensure_models_conf() {
-    need_cmd python3
     local vram_mib vram_gb max_gb
+    log "Using Python: $PYTHON3 ($("$PYTHON3" -c 'import sys; print(sys.version.split()[0])'))"
     vram_mib="$(gpu_vram_mib)"
     # Whole-GB rounding so 16303 MiB → 16GB → 14GB weight budget (same rule as the UI).
-    vram_gb="$(python3 -c "print(round(float('$vram_mib') / 1024))")"
-    max_gb="$(python3 -c "print(round(float('$vram_gb') * 14 / 16, 2))")"
-    log "GPU VRAM ${vram_gb}GB — populating models.conf with weights ≤ ${max_gb}GB (full GPU fit)"
+    vram_gb="$("$PYTHON3" -c "print(round(float('$vram_mib') / 1024))")"
+    max_gb="$("$PYTHON3" -c "print(round(float('$vram_gb') * 14 / 16, 2))")"
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        log "Apple Silicon unified memory ${vram_gb}GB — models.conf weights ≤ ${max_gb}GB"
+    else
+        log "GPU VRAM ${vram_gb}GB — populating models.conf with weights ≤ ${max_gb}GB (full GPU fit)"
+    fi
 
     if [[ -f "$ROOT/models.conf" ]]; then
         cp -a "$ROOT/models.conf" "$ROOT/models.conf.bak"
@@ -127,7 +192,7 @@ ensure_models_conf() {
     MODELS_CONF="$ROOT/models.conf" \
     VRAM_GB="$vram_gb" \
     MAX_GB="$max_gb" \
-    python3 <<'PY'
+    "$PYTHON3" <<'PY'
 import json, os, re
 from pathlib import Path
 
@@ -222,11 +287,10 @@ PY
 }
 
 ensure_web_venv() {
-    need_cmd python3
-    log "Setting up web virtualenv"
+    log "Setting up web virtualenv with $PYTHON3"
     cd "$ROOT/web"
     if [[ ! -d .venv ]]; then
-        python3 -m venv .venv
+        "$PYTHON3" -m venv .venv
     fi
     # Avoid inherited corporate index (e.g. CodeArtifact) for this local panel.
     export PIP_INDEX_URL="https://pypi.org/simple"
@@ -328,8 +392,10 @@ print_next_steps() {
 Setup complete (version $ver).
 
   Start control panel:  ./gpt panel
+  Or detached:          ./gpt panel --daemon
   Open UI:              http://127.0.0.1:8080
   Isolated models:      ./gpt list
+  Benchmark:            ./gpt bench
 
   Push when ready:      git push -u origin HEAD
                         git push origin v${ver}

@@ -31,10 +31,16 @@
 | `llama3.2-vision:11b` | 7.8 GB | vision | Image + text understanding | full |
 | `nomic-embed-text:latest` | 274 MB | embeddings | Local embeddings / RAG | full |
 
-## GPU fit (RTX 5080 — 16GB VRAM)
+## GPU fit
 
-- **full** — runs entirely on GPU at typical Q4 context
+Labels are relative to a typical Q4 load. `./gpt install` picks models for
+**this machine** from detected VRAM (NVIDIA) or unified memory (Apple Silicon).
+
+- **full** — runs entirely on GPU / Metal at typical Q4 context
 - **tight** — fits with short context (4K–8K); watch KV cache
-- **spill** — weights overflow to RAM; much slower for interactive use
+- **spill** — weights overflow to system RAM; much slower for interactive use
 
-Models up to ~14B (Q4) run fully on GPU. Larger models spill weights to RAM and run slower.
+On a ~16GB NVIDIA card, models up to ~14B (Q4) are usually **full**. On Apple
+Silicon, the budget is a fraction of unified memory (see `gpu_note` in
+`models.json` after install).
+

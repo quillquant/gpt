@@ -1,9 +1,12 @@
 # model=port
-# Port 11434 is reserved for the main systemd ollama service
+# Port 11434 is reserved for the main Ollama service
+# (systemd on Linux; brew services / Ollama app on macOS).
 #
 # This file is generated per-machine by: ./gpt install
-# (from models.json + detected GPU VRAM). Do not commit models.conf.
+# (from models.json + detected GPU VRAM or Apple Silicon unified memory).
+# Do not commit models.conf.
 #
 # Example:
 # deepseek-r1:8b=11435
 # gemma3:12b=11436
+# qwen2.5:7b=11461

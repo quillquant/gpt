@@ -1,5 +1,5 @@
 {
-  "gpu_note": "~16GB VRAM. Models up to ~14GB (Q4-class) are treated as full GPU fit. Larger weights spill to system RAM.",
+  "gpu_note": "~16GB VRAM (or Apple Silicon unified memory). Models up to ~14GB (Q4-class) are treated as full GPU fit on a 16GB card; ./gpt install rewrites this note for the local machine. Larger weights spill to system RAM.",
   "models": {
     "deepseek-r1:14b": {
       "size": "9.0 GB",

@@ -7,22 +7,32 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF="$SCRIPT_DIR/models.conf"
 PID_DIR="${XDG_RUNTIME_DIR:-/tmp}/ollama-isolated"
 LOG_DIR="${PID_DIR}/logs"
-# Systemd ollama runs as user `ollama` and stores pulls here. Isolated serves
-# must use the same store or they only see ~/.ollama (usually nearly empty).
-OLLAMA_MODELS_DIR="${OLLAMA_MODELS:-/usr/share/ollama/.ollama/models}"
+
+# Linux systemd ollama stores pulls under /usr/share/ollama; macOS Homebrew uses ~/.ollama.
+if [[ -z "${OLLAMA_MODELS:-}" ]]; then
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        OLLAMA_MODELS_DIR="${HOME}/.ollama/models"
+    else
+        OLLAMA_MODELS_DIR="/usr/share/ollama/.ollama/models"
+    fi
+else
+    OLLAMA_MODELS_DIR="$OLLAMA_MODELS"
+fi
 
 # Keep warmed models resident until explicitly stopped.
 export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:--1}"
 export OLLAMA_MAX_LOADED_MODELS="${OLLAMA_MAX_LOADED_MODELS:-1}"
-# Skip probing cuda_v12 / vulkan — pin the CUDA 13 backend (RTX 50-series).
-if [[ -z "${OLLAMA_LLM_LIBRARY:-}" ]]; then
+# Skip probing cuda_v12 / vulkan — pin the CUDA backend on Linux NVIDIA hosts.
+if [[ "$(uname -s)" == "Linux" && -z "${OLLAMA_LLM_LIBRARY:-}" ]]; then
     if [[ -d /usr/local/lib/ollama/cuda_v13 ]]; then
         export OLLAMA_LLM_LIBRARY=cuda_v13
     elif [[ -d /usr/local/lib/ollama/cuda_v12 ]]; then
         export OLLAMA_LLM_LIBRARY=cuda_v12
     fi
 fi
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+if [[ "$(uname -s)" == "Linux" ]]; then
+    export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+fi
 
 _load_conf() {
     [[ -f "$CONF" ]] || { echo "Config not found: $CONF"; exit 1; }
@@ -65,20 +75,23 @@ cmd_start() {
     fi
 
       # DEBUG timestamps are needed to split warm load into meta vs sched.
-      # Pin CUDA library to avoid multi-backend GPU discovery (~2s).
-      OLLAMA_HOST="127.0.0.1:$port" \
-      OLLAMA_MODELS="$OLLAMA_MODELS_DIR" \
-      OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE" \
-      OLLAMA_MAX_LOADED_MODELS="$OLLAMA_MAX_LOADED_MODELS" \
-      OLLAMA_LLM_LIBRARY="${OLLAMA_LLM_LIBRARY:-}" \
-      CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" \
-      OLLAMA_DEBUG="${OLLAMA_DEBUG:-1}" \
-      ollama serve &>"$(_logfile "$model")" &
+      # Pin CUDA library on Linux to avoid multi-backend GPU discovery (~2s).
+      (
+        export OLLAMA_HOST="127.0.0.1:$port"
+        export OLLAMA_MODELS="$OLLAMA_MODELS_DIR"
+        export OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE"
+        export OLLAMA_MAX_LOADED_MODELS="$OLLAMA_MAX_LOADED_MODELS"
+        export OLLAMA_DEBUG="${OLLAMA_DEBUG:-1}"
+        [[ -n "${OLLAMA_LLM_LIBRARY:-}" ]] && export OLLAMA_LLM_LIBRARY
+        [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]] && export CUDA_VISIBLE_DEVICES
+        exec ollama serve
+      ) &>"$(_logfile "$model")" &
     local pid=$!
     echo "$pid" > "$(_pidfile "$model")"
 
     echo -n "Starting $model on port $port (PID $pid, models=$OLLAMA_MODELS_DIR)..."
-    for i in {1..30}; do
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
         curl -sf "http://127.0.0.1:$port/api/tags" &>/dev/null && break
         sleep 0.5
     done
@@ -170,6 +183,19 @@ cmd_logs() {
 }
 
 cmd_service_start() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+            echo "ollama is already running on :11434"
+            return 0
+        fi
+        if command -v brew >/dev/null 2>&1; then
+            brew services start ollama
+            echo "ollama started via brew services"
+            return 0
+        fi
+        echo "start the Ollama app, or: ollama serve" >&2
+        return 1
+    fi
     if systemctl is-active --quiet ollama; then
         echo "ollama is already running"
         systemctl status ollama --no-pager -l | head -5
@@ -181,6 +207,15 @@ cmd_service_start() {
 }
 
 cmd_service_stop() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        if command -v brew >/dev/null 2>&1; then
+            brew services stop ollama
+            echo "ollama stopped via brew services"
+            return 0
+        fi
+        echo "quit the Ollama app to stop the service" >&2
+        return 1
+    fi
     if ! systemctl is-active --quiet ollama; then
         echo "ollama is not running"
         return 0
@@ -190,6 +225,15 @@ cmd_service_stop() {
 }
 
 cmd_upgrade() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        if command -v brew >/dev/null 2>&1; then
+            brew upgrade ollama
+            ollama --version
+            return 0
+        fi
+        echo "upgrade via https://ollama.com/download or: brew upgrade ollama" >&2
+        return 1
+    fi
     # Upgrade the Ollama binary/libs to the latest Linux amd64 release.
     local archive="/tmp/ollama-upgrade/ollama-linux-amd64.tar.zst"
     local install_dir="/usr/local"
@@ -218,7 +262,10 @@ cmd_upgrade() {
 }
 
 cmd_update_models() {
-    mapfile -t models < <(ollama list | tail -n +2 | awk '{print $1}')
+    local models=() model
+    while IFS= read -r model; do
+        [[ -n "$model" ]] && models+=("$model")
+    done < <(ollama list | tail -n +2 | awk '{print $1}')
     if [[ ${#models[@]} -eq 0 ]]; then
         echo "No models installed"
         return 0
@@ -246,14 +293,15 @@ Isolated model servers:
   logs <model>           Tail the log for a model's server
 
 Main Ollama service / install:
-  service-start          Start systemd ollama.service
-  service-stop           Stop systemd ollama.service
-  upgrade                Download/install latest Ollama binary (sudo)
+  service-start          Start main Ollama (brew services on macOS, systemd on Linux)
+  service-stop           Stop main Ollama
+  upgrade                Upgrade Ollama (brew on macOS; Linux amd64 tarball + sudo)
   update-models          ollama pull every locally installed model
 
 Each model runs as its own ollama serve process on a dedicated TCP port.
 Connect directly:  OLLAMA_HOST=127.0.0.1:<port> ollama run <model>
 Port assignments:  $CONF
+Models dir:        $OLLAMA_MODELS_DIR  (override with OLLAMA_MODELS)
 
 Tip: prefer ./gpt <command> for install / panel / bench as well.
 EOF

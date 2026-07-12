@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import subprocess
 import time
@@ -28,7 +29,6 @@ STATIC = Path(__file__).resolve().parent / "static"
 ISOLATED_LOG_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "ollama-isolated" / "logs"
 
 app = FastAPI(title="Ollama Control Panel")
-
 
 def _isolated_log_path(name: str) -> Path:
     safe = name.replace(":", "_").replace("/", "_").replace(" ", "_")
@@ -373,7 +373,7 @@ def _classify_library_model(family: str, caps: set[str], desc: str) -> str:
 
 
 def _gpu_vram_mib() -> float:
-    """Total GPU VRAM in MiB via nvidia-smi; fall back to RTX 5080 16GB."""
+    """Total GPU VRAM in MiB (nvidia-smi, or Apple Silicon unified memory)."""
     try:
         result = subprocess.run(
             [
@@ -396,6 +396,21 @@ def _gpu_vram_mib() -> float:
                 return total
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass
+    if platform.system() == "Darwin":
+        try:
+            result = subprocess.run(
+                ["sysctl", "-n", "hw.memsize"],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+                check=False,
+            )
+            if result.returncode == 0:
+                bytes_total = int(result.stdout.strip())
+                if bytes_total > 0:
+                    return bytes_total / (1024.0 * 1024.0)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
     return 16303.0
 
 

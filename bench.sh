@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Smoke tests + load/chat benchmark for the local control panel.
+# Requires the panel to be running (./gpt panel or ./gpt panel --daemon).
+# Usage: ./gpt bench [model...]
+# Defaults: gemma3:4b deepseek-r1:1.5b (must exist in models.conf and be pulled).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,6 +11,25 @@ MODELS=("$@")
 if [[ ${#MODELS[@]} -eq 0 ]]; then
   MODELS=(gemma3:4b deepseek-r1:1.5b)
 fi
+
+# Prefer Homebrew Python on macOS (system python3 is often 3.9).
+PY=""
+for cand in \
+    "${PYTHON:-}" \
+    python3.14 python3.13 python3.12 python3.11 \
+    /opt/homebrew/bin/python3 \
+    /usr/local/bin/python3 \
+    python3
+do
+  [[ -n "$cand" ]] || continue
+  if command -v "$cand" >/dev/null 2>&1; then
+    PY="$(command -v "$cand")"
+    break
+  fi
+done
+[[ -n "$PY" ]] || { echo "python3 required" >&2; exit 1; }
+
+now() { "$PY" -c 'import time; print(f"{time.time():.6f}")'; }
 
 pass=0
 fail=0
@@ -27,58 +49,61 @@ echo "=== SMOKE ($BASE) ==="
 check "GET /" curl -sf -o /dev/null "$BASE/"
 check "GET /api/models" curl -sf -o /dev/null "$BASE/api/models"
 check "GET /api/models/available" curl -sf -m 60 -o /tmp/gpt-available.json "$BASE/api/models/available"
-check "available has categories" python3 - <<'PY'
+check "available has categories" "$PY" - <<'PY'
 import json
 d=json.load(open("/tmp/gpt-available.json"))
 assert "models" in d and "max_param_b" in d
 assert all("category" in m for m in d["models"][:5] or [{"category":"x"}])
 PY
-check "pull rejects missing tag" python3 - <<PY
-import json,urllib.request
+check "pull rejects missing tag" "$PY" - <<PY
+import json,urllib.request,urllib.error
 req=urllib.request.Request(
   "$BASE/api/models/pull",
   data=b'{"name":"llama3.1:4b"}',
   headers={"Content-Type":"application/json"},
   method="POST",
 )
-with urllib.request.urlopen(req, timeout=30) as r:
-  body=r.read().decode()
+try:
+  with urllib.request.urlopen(req, timeout=30) as r:
+    body=r.read().decode()
+except urllib.error.HTTPError as e:
+  body=e.read().decode()
 assert "not found" in body.lower() or "error" in body.lower()
 PY
 
 echo
 echo "=== BENCHMARK ==="
-printf '%-22s %10s %10s %10s %8s\n' MODEL LOAD_S CHAT_S TOK_S DEVICE
+printf '%-22s %10s %10s %10s %8s %10s\n' MODEL LOAD_S CHAT_S TOK_S DEVICE WALL_S
 for model in "${MODELS[@]}"; do
-  enc=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$model")
+  enc=$("$PY" -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$model")
   curl -sf -X POST "$BASE/api/models/${enc}/stop" >/dev/null 2>&1 || true
   "$ROOT/ollama-isolated.sh" stop "$model" >/dev/null 2>&1 || true
   sleep 0.5
 
-  wall_start=$(date +%s.%N)
+  wall_start=$(now)
   if ! curl -sf -m 600 -o /tmp/gpt-load.json -X POST "$BASE/api/models/${enc}/start"; then
-    printf '%-22s %10s %10s %10s %8s\n' "$model" FAIL - - -
+    printf '%-22s %10s %10s %10s %8s %10s\n' "$model" FAIL - - - -
     fail=$((fail + 1))
     continue
   fi
-  wall_end=$(date +%s.%N)
+  wall_end=$(now)
 
-  load_s=$(python3 - <<'PY'
+  load_s=$("$PY" - <<'PY'
 import json
 d=json.load(open("/tmp/gpt-load.json"))
 print(f"{(d.get('load_duration') or 0)/1e9:.3f}")
 PY
 )
-  device=$(python3 -c 'import json; print(json.load(open("/tmp/gpt-load.json")).get("device","?"))')
-  wall_s=$(python3 -c "print(f'{float('$wall_end')-float('$wall_start'):.3f}')")
+  device=$("$PY" -c 'import json; print(json.load(open("/tmp/gpt-load.json")).get("device","?"))')
+  wall_s=$("$PY" -c "print(f'{float('$wall_end')-float('$wall_start'):.3f}')")
 
-  chat_start=$(date +%s.%N)
+  chat_start=$(now)
   curl -sf -m 300 -o /tmp/gpt-chat.ndjson -X POST "$BASE/api/models/${enc}/chat" \
     -H 'Content-Type: application/json' \
     -d '{"message":"Reply with exactly: OK","history":[],"think":false,"images":[]}'
-  chat_end=$(date +%s.%N)
-  chat_s=$(python3 -c "print(f'{float('$chat_end')-float('$chat_start'):.3f}')")
-  tok_s=$(python3 - <<'PY'
+  chat_end=$(now)
+  chat_s=$("$PY" -c "print(f'{float('$chat_end')-float('$chat_start'):.3f}')")
+  tok_s=$("$PY" - <<'PY'
 import json
 tok=None
 for line in open("/tmp/gpt-chat.ndjson"):
@@ -93,7 +118,7 @@ for line in open("/tmp/gpt-chat.ndjson"):
 print(f"{tok:.1f}" if tok else "-")
 PY
 )
-  printf '%-22s %10s %10s %10s %8s  (wall_start=%s)\n' "$model" "$load_s" "$chat_s" "$tok_s" "$device" "$wall_s"
+  printf '%-22s %10s %10s %10s %8s %10s\n' "$model" "$load_s" "$chat_s" "$tok_s" "$device" "$wall_s"
   pass=$((pass + 1))
   curl -sf -X POST "$BASE/api/models/${enc}/stop" >/dev/null 2>&1 || true
 done
