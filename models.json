@@ -168,6 +168,18 @@
       "category": "large",
       "best_for": "Strong Qwen 3.5 quality \u2014 tight on 16GB; keep context short",
       "gpu_fit": "spill"
+    },
+    "shakti-coder:14b": {
+      "size": "9.0 GB",
+      "category": "coding",
+      "best_for": "Shakti/Isolde syntax assistant (Modelfile on qwen2.5-coder:14b)",
+      "gpu_fit": "full"
+    },
+    "shakti-coder-ft:14b": {
+      "size": "8.4 GB",
+      "category": "coding",
+      "best_for": "Shakti/Isolde syntax assistant (QLoRA fine-tune of Qwen2.5-Coder-14B)",
+      "gpu_fit": "full"
     }
   }
 }
